@@ -1,0 +1,28 @@
+name: Build DynamicCards
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Compilar extensão AIX
+        id: build
+        uses: pavi2410/AIX-Action@main
+        with:
+          source-dir: src
+          package-name: com.plotpoint.dynamiccards
+
+      - name: Disponibilizar arquivo AIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynamicCards
+          path: ${{ steps.build.outputs.extension-path }}
