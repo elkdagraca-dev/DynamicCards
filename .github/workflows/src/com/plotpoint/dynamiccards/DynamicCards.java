@@ -510,3 +510,470 @@ public class DynamicCards extends AndroidNonvisibleComponent {
             return Html.fromHtml(value);
         }
     }
+    private void loadImage(
+            final String url,
+            final ImageView imageView) {
+
+        Bitmap cached =
+                memoryCache.get(url);
+
+        if (cached != null) {
+
+            imageView.setImageBitmap(
+                    cached
+            );
+
+            return;
+        }
+
+        new Thread(
+                new Runnable() {
+
+                    @Override
+                    public void run() {
+
+                        Bitmap bitmap =
+                                getFromDisk(url);
+
+                        if (bitmap == null) {
+
+                            bitmap =
+                                    downloadImage(url);
+
+                            if (bitmap != null) {
+
+                                saveToDisk(
+                                        url,
+                                        bitmap
+                                );
+                            }
+                        }
+
+                        final Bitmap result =
+                                bitmap;
+
+                        if (result != null) {
+
+                            memoryCache.put(
+                                    url,
+                                    result
+                            );
+                        }
+
+                        mainHandler.post(
+                                new Runnable() {
+
+                                    @Override
+                                    public void run() {
+
+                                        if (result != null) {
+
+                                            imageView.setImageBitmap(
+                                                    result
+                                            );
+                                        }
+                                    }
+                                }
+                        );
+                    }
+                }
+        ).start();
+    }
+
+    private Bitmap downloadImage(
+            String urlString) {
+
+        HttpURLConnection connection =
+                null;
+
+        InputStream input =
+                null;
+
+        File temporaryFile =
+                null;
+
+        FileOutputStream output =
+                null;
+
+        try {
+
+            URL url =
+                    new URL(urlString);
+
+            connection =
+                    (HttpURLConnection)
+                            url.openConnection();
+
+            connection.setConnectTimeout(
+                    10000
+            );
+
+            connection.setReadTimeout(
+                    15000
+            );
+
+            connection.setInstanceFollowRedirects(
+                    true
+            );
+
+            connection.connect();
+
+            if (connection.getResponseCode()
+                    != HttpURLConnection.HTTP_OK) {
+
+                return null;
+            }
+
+            input =
+                    new BufferedInputStream(
+                            connection.getInputStream()
+                    );
+
+            temporaryFile =
+                    new File(
+                            cacheDirectory(),
+                            "tmp_"
+                            + System.currentTimeMillis()
+                    );
+
+            output =
+                    new FileOutputStream(
+                            temporaryFile
+                    );
+
+            byte[] buffer =
+                    new byte[8192];
+
+            int length;
+
+            while ((length =
+                    input.read(buffer)) != -1) {
+
+                output.write(
+                        buffer,
+                        0,
+                        length
+                );
+            }
+
+            output.flush();
+            output.close();
+            output = null;
+
+            return decodeSampledBitmap(
+                    temporaryFile,
+                    imageWidth(),
+                    imageHeight
+            );
+
+        } catch (Exception e) {
+
+            return null;
+
+        } finally {
+
+            try {
+
+                if (input != null) {
+                    input.close();
+                }
+
+            } catch (Exception ignored) {
+            }
+
+            try {
+
+                if (output != null) {
+                    output.close();
+                }
+
+            } catch (Exception ignored) {
+            }
+
+            if (connection != null) {
+                connection.disconnect();
+            }
+
+            if (temporaryFile != null &&
+                    temporaryFile.exists()) {
+
+                temporaryFile.delete();
+            }
+        }
+    }
+
+    private int imageWidth() {
+
+        if (cardWidth > 0) {
+            return cardWidth;
+        }
+
+        return 320;
+    }
+
+    private Bitmap decodeSampledBitmap(
+            File file,
+            int requestedWidth,
+            int requestedHeight) {
+
+        BitmapFactory.Options bounds =
+                new BitmapFactory.Options();
+
+        bounds.inJustDecodeBounds =
+                true;
+
+        BitmapFactory.decodeFile(
+                file.getAbsolutePath(),
+                bounds
+        );
+
+        BitmapFactory.Options options =
+                new BitmapFactory.Options();
+
+        options.inSampleSize =
+                calculateSampleSize(
+                        bounds.outWidth,
+                        bounds.outHeight,
+                        requestedWidth,
+                        requestedHeight
+                );
+
+        options.inPreferredConfig =
+                Bitmap.Config.RGB_565;
+
+        return BitmapFactory.decodeFile(
+                file.getAbsolutePath(),
+                options
+        );
+    }
+
+    private int calculateSampleSize(
+            int width,
+            int height,
+            int requestedWidth,
+            int requestedHeight) {
+
+        if (width <= 0 || height <= 0) {
+            return 1;
+        }
+
+        int sample = 1;
+
+        if (requestedWidth <= 0) {
+            requestedWidth = width;
+        }
+
+        if (requestedHeight <= 0) {
+            requestedHeight = height;
+        }
+
+        while (
+                (width / (sample * 2))
+                        >= requestedWidth
+                &&
+                (height / (sample * 2))
+                        >= requestedHeight
+        ) {
+
+            sample *= 2;
+        }
+
+        return sample;
+    }
+
+    private File cacheDirectory() {
+
+        File directory =
+                new File(
+                        context.getCacheDir(),
+                        "dynamic_cards"
+                );
+
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        return directory;
+    }
+
+    private String hash(String value) {
+
+        try {
+
+            MessageDigest digest =
+                    MessageDigest.getInstance("MD5");
+
+            byte[] bytes =
+                    digest.digest(
+                            value.getBytes("UTF-8")
+                    );
+
+            StringBuilder builder =
+                    new StringBuilder();
+
+            for (byte b : bytes) {
+
+                builder.append(
+                        String.format(
+                                "%02x",
+                                b
+                        )
+                );
+            }
+
+            return builder.toString();
+
+        } catch (Exception e) {
+
+            return String.valueOf(
+                    value.hashCode()
+            );
+        }
+    }
+
+    private File cacheFile(
+            String url) {
+
+        return new File(
+                cacheDirectory(),
+                hash(url) + ".jpg"
+        );
+    }
+
+    private void saveToDisk(
+            String url,
+            Bitmap bitmap) {
+
+        File file =
+                cacheFile(url);
+
+        FileOutputStream output =
+                null;
+
+        try {
+
+            output =
+                    new FileOutputStream(file);
+
+            bitmap.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    85,
+                    output
+            );
+
+            output.flush();
+
+        } catch (Exception ignored) {
+
+        } finally {
+
+            try {
+
+                if (output != null) {
+                    output.close();
+                }
+
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private Bitmap getFromDisk(
+            String url) {
+
+        File file =
+                cacheFile(url);
+
+        if (!file.exists()) {
+            return null;
+        }
+
+        FileInputStream input =
+                null;
+
+        try {
+
+            input =
+                    new FileInputStream(file);
+
+            BitmapFactory.Options options =
+                    new BitmapFactory.Options();
+
+            options.inPreferredConfig =
+                    Bitmap.Config.RGB_565;
+
+            return BitmapFactory.decodeStream(
+                    input,
+                    null,
+                    options
+            );
+
+        } catch (Exception e) {
+
+            return null;
+
+        } finally {
+
+            try {
+
+                if (input != null) {
+                    input.close();
+                }
+
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @SimpleEvent(
+            description =
+                    "Disparado quando um cartão é clicado."
+    )
+    public void CardClicked(
+            String id) {
+
+        EventDispatcher.dispatchEvent(
+                this,
+                "CardClicked",
+                id
+        );
+    }
+
+    @SimpleEvent(
+            description =
+                    "Disparado quando um cartão recebe um clique longo."
+    )
+    public void CardLongClicked(
+            String id) {
+
+        EventDispatcher.dispatchEvent(
+                this,
+                "CardLongClicked",
+                id
+        );
+    }
+
+    @SimpleEvent(
+            description =
+                    "Disparado quando ocorre um erro."
+    )
+    public void Error(
+            String message) {
+
+        EventDispatcher.dispatchEvent(
+                this,
+                "Error",
+                message
+        );
+    }
+
+    private static class FrameContainer
+            extends android.widget.FrameLayout {
+
+        public FrameContainer(
+                Context context) {
+
+            super(context);
+        }
+    }
+                            }
